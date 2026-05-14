@@ -19,17 +19,17 @@
 |------|------|
 | 1 | 강수 관측소 ↔ 수위 관측소 매핑 테이블 |
 | 2 | 상류 관측소 2개 지정 → `metadata_outputs/upstream_mapping_must.csv` |
-| 3 | CCF로 상류별 time lag 추정 |
+| 3 | CCF로 상류별 time lag 추정 → `metadata_outputs/upstream_lag_ccf_by_stationv20260514_0735.csv |  
 | 4 | `station_id` × `datetime` 스켈레톤 |
 | 5 | 수위 long merge |
 | 6 | 관측소 static 메타 merge |
-| 7 | 강수 merge (nearest 등) |
+| 7 | 강수 merge ([1] 매핑 정보 기반 등) |
 | 8 | `upstream_wl_1`, `upstream_wl_2` — `shift(lag)` |
 | 9 | 이상치 제거 |
 | 10 | `wl_diff` 계산 |
 | 11 | 결측 처리 |
 | 12 | `hour`, `month`, `time_idx` 생성 |
-| 13 | train / val / test split |
+| 13 | train / val / test split | 
 | 14 | `GroupNormalizer` fit(train만) → transform |
 | 15 | `TimeSeriesDataSet` 생성 |
 
@@ -38,7 +38,7 @@
 ## 1.1 수위 원시 적재(데이터 fetch)
 
 - **기간(합의):** `2023-03-01` ~ `2025-10-31` · **1H** · 관측소 **`metadata_outputs/obsTarget.csv`**.  
-- **S3 키:** `hrfco/raw/{year}/waterlevel/date={YYYY-MM-DD}/data.parquet` — 컬럼 `datetime`, `obscd`, `value`, `date` (`output/_s3_missing_analysis.py` 와 동일).  
+- **S3 키:** `hrfco/raw/{year}/waterlevel/date={YYYY-MM-DD}/data.parquet` — 컬럼 `datetime`, `obscd`, `value`, `date` (`src/_s3_missing_analysis.py` 와 동일).  
 - **실행:** `python src/ingest_hrfco_waterlevel_s3.py` (인자 생략 시 **전 구간**·전 관측소). `.env`: `hrfco_token`, `S3_BUCKET`, AWS 자격. API **요청당 기간 상한**은 스크립트가 **청크(기본 최대 330일)**로 나눠 처리한다.  
 - **원시 격자 요약:** `metadata_outputs/hrfco_waterlevel_missingness_by_station_day.csv` — 컬럼 `obscd`, `calendar_date`, `row_count`, `uniq_hours`, `missing_hours_est`, `value_na` (같은 실행에서 갱신, `--no-missingness` 로 생략).  
 - **이후 4~5단계:** 스켈레톤·merge는 **위 S3·1H**만 사용한다(S3에 없는 일자는 스켈레톤상 결측으로 남는다).
@@ -71,14 +71,14 @@
 | 항목 | 고정(1차안) | 검토 포인트 |
 |------|-------------|-------------|
 | **적합 구간** | `fit_start=2023-03-01`, `fit_end=2024-08-31` (= train) | val·test는 lag 피크·임계값 튜닝에 **미사용** |
-| **D1 시계열** | **Q1:** train 창·동시 유효 격자에서 결측률 **<30%**이면 **11번과 동일 보간(상한 포함)** 후 CCF, **≥30%**이면 **미보간** 원시로 CCF. `ccf_input_branch` 기록. 상세·보완은 [`proc/plan/ccf_upstream_lag.md`](../proc/plan/ccf_upstream_lag.md) §4~6. | 8번은 **동일 분기**로 수위 생성 후 `shift`. |
+| **D1 시계열** | **Q1:** train 창·동시 유효 격자에서 결측률 **<30%**이면 **11번과 동일 보간(상한 포함)** 후 CCF, **≥30%**이면 **미보간** 원시로 CCF. `ccf_input_branch` 기록. 상세·보완은 아래 **§3 D0–D9**·**§2.1(A1–A7)** 표와 동일 선상에서 고정한다. | 8번은 **동일 분기**로 수위 생성 후 `shift`. |
 | **D3 필터** | 없음(전 train 사용) | 필요 시 고수위 부분집합은 **train 안 통계만** |
 | **D4 `L_max`** | 120 스텝(120h), `L ∈ [0,120]` | **E=168** 이하·전파 상한 검토 |
 | **D5 게이트** | 쌍별 `n_effective ≥ 336`(14일×24h) 미만이면 비채택 | `max_corr`·2위 피크 차 임계는 구현·플롯 보고 조정 |
 | **D6 fallback** | 채택 실패 시 `lag_steps=0`, `reliable=false`, `fallback_reason` 기록 | 스트림 내 중앙값 등으로 바꿀지 검토 |
 | **D7** | `upstream_mapping_must.md` (`lag0`, NaN) | `lag0==True`는 **행 유지(Q5 B)** + 8번 마스킹 |
 | **D8 부호** | `src/run_dtw.py` 의 `crosscorr_lag_steps_dtw_check`(ref=상류, tgt=하류)와 **동일 정의**로 `L`→`shift` 매핑 문서화 | 스모크 N6 |
-| **D9 산출** | **버전 파일명** `upstream_lag_xccf_v*.csv` + 고정 **`metadata_outputs/upstream_lag_manifest.json`** (`active_csv` 등). 상세 [`proc/plan/ccf_upstream_lag.md`](../proc/plan/ccf_upstream_lag.md) §6~7. | 버전·커밋 A7 |
+| **D9 산출** | **버전 파일명** `upstream_lag_xccf_v*.csv` + 고정 **`metadata_outputs/upstream_lag_manifest.json`** (`active_csv` 등). 상세는 **§3 D9**·**§4 N5·N7**와 `upstream_lag_manifest.json` 스키마를 따른다. | 버전·커밋 A7 |
 
 **GroupNormalizer:** train 캘린더만 fit(§2.3 C4).
 
@@ -167,7 +167,7 @@ CCF 또는 `shift(lag)`와 **정의가 어긋나면** 조용히 성능만 나빠
 | D6 | **비채택 시 fallback** | lag=0, 스트림 내 중앙값, 수동 테이블 등 | 산출물에 `fallback_reason` 권장 |
 | D7 | **`lag0`/NaN 처리** | `lag0=True`·`upstream` NaN은 CCF 제외 규칙 | **B1·B2** |
 | D8 | **부호·컨벤션** | CCF 출력 인덱스 → `L` → `pandas.shift` 한 줄 매핑 | **A3** 문서화 |
-| D9 | **산출물 형식** | 버전 CSV + `upstream_lag_manifest.json` | **§1.3 D9**·[`proc/plan/ccf_upstream_lag.md`](../proc/plan/ccf_upstream_lag.md) §7 |
+| D9 | **산출물 형식** | 버전 CSV + `upstream_lag_manifest.json` | **§1.3 D9**·**§4 N5·N7** |
 
 ---
 
@@ -190,7 +190,7 @@ CCF 또는 `shift(lag)`와 **정의가 어긋나면** 조용히 성능만 나빠
 
 ## 5. 다음 액션(권장)
 
-1. **최종 계획:** [`proc/plan/ccf_upstream_lag.md`](../proc/plan/ccf_upstream_lag.md) — 구현·검증·manifest 규약.  
+1. **CCF 규약:** 본 문서 **§1.3**·**§3–§4**·**§2.1** — 구현·검증·manifest 규약.  
 2. **본 파이프라인**에서 §1.1 적재를 유지한 채 CCF 스크립트·**§1.3**·§3·§4를 동기화한다.  
 3. **섹션 2.1(A1–A7)**은 CCF·merge 변경 시 리그레션 체크리스트로 쓴다.  
-4. 정책이 바뀌면 본 문서·계획서·[`docs/metadata_outputs/upstream_mapping_must.md`](metadata_outputs/upstream_mapping_must.md)를 함께 갱신한다.
+4. 정책이 바뀌면 본 문서·[`docs/metadata_outputs/upstream_mapping_must.md`](metadata_outputs/upstream_mapping_must.md)를 함께 갱신한다.

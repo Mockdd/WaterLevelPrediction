@@ -1,7 +1,7 @@
 """
 HRFCO 수위 1H API → S3 Parquet 적재.
 
-S3 키·스키마는 ``output/_s3_missing_analysis.py`` 가 읽는 형식과 맞춘다.
+S3 키·스키마는 ``src/_s3_missing_analysis.py`` 가 읽는 형식과 맞춘다.
 
   s3://{S3_BUCKET}/hrfco/raw/{year}/waterlevel/date={YYYY-MM-DD}/data.parquet
 

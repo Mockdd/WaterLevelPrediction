@@ -37,6 +37,6 @@ python src/finalize_dtw.py
 
 `output/DTW/clusters/`에 `*_clusters.csv`가 있고, `similarity/`에 `*_topk.csv`가 있어야 합니다. 먼저 `python src/run_dtw.py`로 이벤트별 산출물을 생성한 뒤 `finalize_dtw.py`를 실행하는 흐름이 자연스럽습니다.
 
-## 다른 실험 폴더
+## 보관·전파 산출
 
-과거 실행물은 `output/DTW/results/<실험명>/final/` 등에 복사·보관된 경우가 있습니다. 내용 형식은 위와 동일한 CSV 패턴을 따릅니다.
+이전에 `output/DTW/results/<실험명>/` 아래에 두던 **중복 사본**은 제거했다. 피크 기반 전파 CSV만 `output/DTW/propagation/peak_lag/`에 남겨 두었고, 그 외 DTW 파이프라인 산출은 `output/DTW/final/`·`clusters/`·`similarity/`·`propagation/stream_adjacent/` 등 표준 경로를 쓴다.
