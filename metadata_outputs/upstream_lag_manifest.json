@@ -1,0 +1,11 @@
+{
+  "active_csv": "metadata_outputs/upstream_lag_ccf_by_station_v20260514_0735.csv",
+  "fit_start": "2023-03-01",
+  "fit_end": "2024-08-31",
+  "created_at": "2026-05-14T07:35:55.782957+00:00Z",
+  "git_commit": null,
+  "l_max": 120,
+  "n_effective_min": 336,
+  "missing_rate_thresh": 0.3,
+  "mapping_csv": "metadata_outputs/upstream_mapping_must.csv"
+}

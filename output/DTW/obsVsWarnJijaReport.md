@@ -6,7 +6,7 @@
 
 - obsFinal 중 designFlood 지정: 64개
 
-- floodWarnJija 고유 지점: 28개
+- floodWarn (홍수정보시스템) 고유 지점: 28개
 
 
 ---
@@ -91,7 +91,7 @@
 
 ---
 
-## (2)(3) floodWarnJija 지점별 수계·하천·권역
+## (2)(3) floodWarn 지점별 수계·하천·권역
 
 
 ### 권역: 안성천 (4개)
