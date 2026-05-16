@@ -118,7 +118,7 @@ WORK      = "/content/drive/MyDrive/floodax/experiments/tft" # 학습 산출
 
 | # | 경로 |
 |---|------|
-| 11 | `metadata_outputs/obsTarget.csv` |
+| 11 | `metadata_outputs/obsFinalStreamReg.csv` |
 | 12 | `metadata_outputs/obsWaterLevel_top1.csv` |
 | 13 | `metadata_outputs/upstream_mapping_must.csv` |
 | 14 | `metadata_outputs/upstream_lag_manifest.json` + active lag CSV |
@@ -143,7 +143,7 @@ WORK      = "/content/drive/MyDrive/floodax/experiments/tft" # 학습 산출
 | 컬럼 | `datetime`, `obscd`, `value`, `date` |
 | `obscd` | 수위 관측소 = 패널 `station_id` |
 | `value` | 수위(m), 1H |
-| 관측소 목록 | `metadata_outputs/obsTarget.csv` → `codeObs` |
+| 관측소 목록 | `metadata_outputs/obsFinalStreamReg.csv` → `codeObs` |
 
 ### 4.2 KMA AWS 강수
 

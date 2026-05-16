@@ -36,7 +36,7 @@
       "rainfall": "kma/raw/{year}/aws_awsh_1h/date={yyyy-mm-dd}/data.parquet"
     },
     "metadata": {
-      "stations_csv_default": "metadata_outputs/obsTarget.csv",
+      "stations_csv_default": "metadata_outputs/obsFinalStreamReg.csv",
       "rainfall_map_csv": "metadata_outputs/obsWaterLevel_top1.csv",
       "upstream_map_csv": "metadata_outputs/upstream_mapping_must.csv",
       "lag_manifest": "metadata_outputs/upstream_lag_manifest.json",
@@ -106,7 +106,7 @@
         "max_stations": 35,
         "out_dir": "data/tft_processed_sample_train",
         "eligibility_out": "data/tft_processed_sample_train/tft_station_eligibility.csv",
-        "stations_csv": "metadata_outputs/obsTarget.csv",
+        "stations_csv": "metadata_outputs/obsFinalStreamReg.csv",
         "encoder_length": 168,
         "prediction_length": 6,
         "interp_limit": 24
@@ -176,14 +176,14 @@
       "id": "exp20_full_preprocess",
       "phase": "P2",
       "status": "planned",
-      "description": "obsTarget 전체·전 캘린더 전처리 (S3 백필 완료 후)",
+      "description": "obsFinalStreamReg 전체·전 캘린더 전처리 (S3 백필 완료 후)",
       "preprocess": {
         "start": "2023-03-01",
         "end": "2025-10-31",
         "max_stations": null,
         "out_dir": "data/tft_processed",
         "eligibility_out": "metadata_outputs/tft_station_eligibility.csv",
-        "stations_csv": "metadata_outputs/obsTarget.csv"
+        "stations_csv": "metadata_outputs/obsFinalStreamReg.csv"
       },
       "train": null,
       "prerequisites": [

@@ -2,7 +2,7 @@
 TFT 학습용 패널 전처리 (``docs/before_training.md`` 정합).
 
 S3: HRFCO 수위 ``hrfco/raw/.../waterlevel/``, KMA 강수 ``kma/raw/.../aws_awsh_1h/``.
-메타: ``obsTarget.csv``, ``obsWaterLevel_top1.csv``, ``upstream_mapping_must.csv``,
+메타: ``obsFinalStreamReg.csv`` (기본 관측소), ``obsWaterLevel_top1.csv``, ``upstream_mapping_must.csv``,
       ``upstream_lag_manifest.json`` → lag CSV.
 
 Colab 예::
@@ -49,7 +49,8 @@ DEFAULT_TEST_END = "2025-10-31"
 INTERP_LIMIT_H = 24
 MISSING_RATE_THRESH = 0.30
 
-OBS_TARGET = ROOT / "metadata_outputs" / "obsTarget.csv"
+OBS_STATIONS_CSV = ROOT / "metadata_outputs" / "obsFinalStreamReg.csv"
+OBS_TARGET = OBS_STATIONS_CSV  # alias (HRFCO ingest·3권 전체와 동일 기준)
 RAIN_MAP = ROOT / "metadata_outputs" / "obsWaterLevel_top1.csv"
 UPSTREAM_MAP = ROOT / "metadata_outputs" / "upstream_mapping_must.csv"
 LAG_MANIFEST = ROOT / "metadata_outputs" / "upstream_lag_manifest.json"

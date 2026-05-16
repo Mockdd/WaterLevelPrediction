@@ -37,7 +37,7 @@
 
 ## 1.1 수위 원시 적재(데이터 fetch)
 
-- **기간(합의):** `2023-03-01` ~ `2025-10-31` · **1H** · 관측소 **`metadata_outputs/obsTarget.csv`**.  
+- **기간(합의):** `2023-03-01` ~ `2025-10-31` · **1H** · 관측소 **`metadata_outputs/obsFinalStreamReg.csv`** (한강·동해·서해; `obsTarget.csv`는 3권 부분집합 ~118개).  
 - **S3 키:** `hrfco/raw/{year}/waterlevel/date={YYYY-MM-DD}/data.parquet` — 컬럼 `datetime`, `obscd`, `value`, `date` (`src/_s3_missing_analysis.py` 와 동일).  
 - **실행:** `python src/ingest_hrfco_waterlevel_s3.py` (인자 생략 시 **전 구간**·전 관측소). `.env`: `hrfco_token`, `S3_BUCKET`, AWS 자격. API **요청당 기간 상한**은 스크립트가 **청크(기본 최대 330일)**로 나눠 처리한다.  
 - **원시 격자 요약:** `metadata_outputs/hrfco_waterlevel_missingness_by_station_day.csv` — 컬럼 `obscd`, `calendar_date`, `row_count`, `uniq_hours`, `missing_hours_est`, `value_na` (같은 실행에서 갱신, `--no-missingness` 로 생략).  
@@ -167,7 +167,7 @@ CCF(Q1)와 동일하게 **결측률 판단은 train 구간만** 쓴다(val/test�
 | 관측소 자격 CSV | **구현됨** | `tft_station_eligibility.csv` |
 | train 구간 30% 분기 보간 | **구현됨** | 전 구간 시계열에 동일 분기 적용 |
 | 윈도 내 장기 결측 샘플 제외 | **미구현** | `waterlevel_missing_handling` M2 — Darts 샘플러·커스텀 필터 후속 |
-| `obsFinalStreamReg` vs `obsTarget` | **기본 `obsTarget`** | HRFCO 3권 전체 쓰려면 `--stations-csv` 변경 |
+| `obsFinalStreamReg` vs `obsTarget` | **기본 `obsFinalStreamReg`** | 한강 3권만: `--stations-csv metadata_outputs/obsTarget.csv` |
 | TFT I/O 상세 | [`docs/tft_io_spec.md`](tft_io_spec.md) | 입출력·Colab·팀 공유 산출물 |
 
 ---

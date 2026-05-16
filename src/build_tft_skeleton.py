@@ -28,7 +28,7 @@ from tft_preprocess import (
     DEFAULT_TRAIN_START,
     DEFAULT_VAL_END,
     DEFAULT_VAL_START,
-    OBS_TARGET,
+    OBS_STATIONS_CSV,
     build_skeleton,
     load_station_list,
 )
@@ -40,7 +40,7 @@ def main() -> int:
     p = argparse.ArgumentParser(description="TFT station×datetime 1H skeleton")
     p.add_argument("--start", default=DEFAULT_TRAIN_START, help="캘린더 시작(포함)")
     p.add_argument("--end", default=DEFAULT_TEST_END, help="캘린더 끝(포함)")
-    p.add_argument("--stations-csv", default=str(OBS_TARGET))
+    p.add_argument("--stations-csv", default=str(OBS_STATIONS_CSV))
     p.add_argument("--max-stations", type=int, default=None)
     p.add_argument("--out", default=str(DEFAULT_OUT), help="출력 parquet 경로")
     args = p.parse_args()
