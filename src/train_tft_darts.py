@@ -103,8 +103,26 @@ def add_experiment_args(p: argparse.ArgumentParser) -> None:
     g.add_argument("--batch-size", type=int, default=128)
     g.add_argument("--n-epochs", type=int, default=50)
     g.add_argument("--learning-rate", type=float, default=1e-3)
-    g.add_argument("--patience", type=int, default=5, help="early stopping patience")
-    g.add_argument("--num-workers", type=int, default=0, help="DataLoader workers (Colab: 0)")
+    g.add_argument("--patience", type=int, default=5, help="early stopping patience (val 필요)")
+    g.add_argument("--num-workers", type=int, default=0, help="DataLoader workers (TFTModel; Colab: 0)")
+    g.add_argument(
+        "--lr-scheduler",
+        choices=("none", "cosine"),
+        default="cosine",
+        help="학습률 스케줄러",
+    )
+    g.add_argument(
+        "--cosine-eta-min",
+        type=float,
+        default=0.0,
+        help="CosineAnnealingLR eta_min",
+    )
+    g.add_argument(
+        "--cosine-tmax",
+        type=int,
+        default=None,
+        help="CosineAnnealingLR T_max (기본: n_epochs)",
+    )
     g.add_argument(
         "--accelerator",
         default="auto",
@@ -239,6 +257,62 @@ def series_dict_from_panel(
     return targets, past_list, fut_list, ids
 
 
+def build_pl_trainer_kwargs(
+    args: argparse.Namespace,
+    *,
+    has_val: bool,
+) -> dict:
+    pl_kw: dict = {
+        "max_epochs": args.n_epochs,
+        "enable_progress_bar": True,
+    }
+    if args.accelerator != "auto":
+        pl_kw["accelerator"] = args.accelerator
+    if has_val and args.patience > 0:
+        from pytorch_lightning.callbacks import EarlyStopping
+
+        pl_kw["callbacks"] = [
+            EarlyStopping(monitor="val_loss", patience=args.patience, mode="min")
+        ]
+    return pl_kw
+
+
+def build_tft_constructor_kwargs(
+    args: argparse.Namespace,
+    *,
+    quantiles: list[float],
+    pl_trainer_kwargs: dict,
+    torch,
+    quantile_regression_cls,
+) -> dict:
+    kw: dict = {
+        "input_chunk_length": args.input_chunk_length,
+        "output_chunk_length": args.output_chunk_length,
+        "hidden_size": args.hidden_size,
+        "lstm_layers": args.lstm_layers,
+        "num_attention_heads": args.num_attention_heads,
+        "dropout": args.dropout,
+        "hidden_continuous_size": args.hidden_continuous_size,
+        "add_relative_index": args.add_relative_index,
+        "batch_size": args.batch_size,
+        "n_epochs": args.n_epochs,
+        "num_workers": args.num_workers,
+        "optimizer_kwargs": {"lr": args.learning_rate},
+        "pl_trainer_kwargs": pl_trainer_kwargs,
+        "force_reset": True,
+        "save_checkpoints": True,
+        "random_state": args.seed,
+        "likelihood": quantile_regression_cls(quantiles=quantiles),
+    }
+    if args.lr_scheduler == "cosine":
+        kw["lr_scheduler_cls"] = torch.optim.lr_scheduler.CosineAnnealingLR
+        kw["lr_scheduler_kwargs"] = {
+            "T_max": args.cosine_tmax or args.n_epochs,
+            "eta_min": args.cosine_eta_min,
+        }
+    return kw
+
+
 def run_preprocess(args: argparse.Namespace, processed_dir: Path) -> None:
     import subprocess
 
@@ -329,32 +403,21 @@ def main() -> int:
         json.dumps(train_ids, indent=2), encoding="utf-8"
     )
 
-    pl_kw = {}
-    if args.accelerator != "auto":
-        pl_kw["accelerator"] = args.accelerator
-
-    model = TFTModel(
-        input_chunk_length=args.input_chunk_length,
-        output_chunk_length=args.output_chunk_length,
-        hidden_size=args.hidden_size,
-        lstm_layers=args.lstm_layers,
-        num_attention_heads=args.num_attention_heads,
-        dropout=args.dropout,
-        hidden_continuous_size=args.hidden_continuous_size,
-        add_relative_index=args.add_relative_index,
-        batch_size=args.batch_size,
-        n_epochs=args.n_epochs,
-        optimizer_kwargs={"lr": args.learning_rate},
-        likelihood=QuantileRegression(quantiles=quantiles),
-        pl_trainer_kwargs={
-            "max_epochs": args.n_epochs,
-            "enable_progress_bar": True,
-            **pl_kw,
-        },
-        force_reset=True,
-        save_checkpoints=True,
-        random_state=args.seed,
+    pl_trainer_kwargs = build_pl_trainer_kwargs(args, has_val=bool(val_tgt))
+    tft_kw = build_tft_constructor_kwargs(
+        args,
+        quantiles=quantiles,
+        pl_trainer_kwargs=pl_trainer_kwargs,
+        torch=torch,
+        quantile_regression_cls=QuantileRegression,
     )
+    if args.lr_scheduler == "cosine":
+        print(
+            f"LR scheduler: CosineAnnealingLR "
+            f"(T_max={tft_kw['lr_scheduler_kwargs']['T_max']}, "
+            f"eta_min={args.cosine_eta_min}, lr0={args.learning_rate})"
+        )
+    model = TFTModel(**tft_kw)
 
     model.fit(
         series=train_tgt,
@@ -364,7 +427,6 @@ def main() -> int:
         val_past_covariates=val_past if val_tgt else None,
         val_future_covariates=val_fut if val_tgt else None,
         verbose=True,
-        num_loader_workers=args.num_workers,
     )
 
     ckpt_path = exp_dir / args.checkpoint_name
