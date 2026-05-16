@@ -1,6 +1,10 @@
 """
 HRFCO 수위 1H API → S3 Parquet 적재.
 
+한강홍수통제소 관할 하천 수위 관측소는 ``metadata_outputs/obsFinalStreamReg.csv`` 에서
+``sphereLarge`` 가 **한강 / 한강동해 / 한강서해** 인 행의 ``codeObs`` 전체를 사용한다
+(기존 ``obsTarget.csv`` 한강권역만 쓰던 범위를 동해·서해 권역까지 확장).
+
 S3 키·스키마는 ``src/_s3_missing_analysis.py`` 가 읽는 형식과 맞춘다.
 
   s3://{S3_BUCKET}/hrfco/raw/{year}/waterlevel/date={YYYY-MM-DD}/data.parquet
@@ -20,6 +24,9 @@ Usage::
 
   python src/ingest_hrfco_waterlevel_s3.py
   python src/ingest_hrfco_waterlevel_s3.py --dry-run --max-stations 3
+  python src/ingest_hrfco_waterlevel_s3.py --station-offset 110
+  (이어받기 시 동일 일자 S3 Parquet가 있으면 **기존 행과 병합** 후 업로드. 덮어쓰기만 하려면 ``--s3-overwrite-day``)
+  python src/ingest_hrfco_waterlevel_s3.py --obs-csv metadata_outputs/obsTarget.csv
   python src/ingest_hrfco_waterlevel_s3.py --no-missingness
 """
 from __future__ import annotations
@@ -36,10 +43,15 @@ from pathlib import Path
 import boto3
 import pandas as pd
 import requests
+from botocore.exceptions import ClientError
 from dotenv import load_dotenv
 
 ROOT = Path(__file__).resolve().parents[1]
-OBS_TARGET = ROOT / "metadata_outputs" / "obsTarget.csv"
+OBS_FINAL_STREAM_REG = ROOT / "metadata_outputs" / "obsFinalStreamReg.csv"
+
+# 한강홍수통제소 HRFCO 권역(대권역) — obsFinalStreamReg 의 sphereLarge 값과 동일하게 유지
+DEFAULT_HRFCO_SPHERE_LARGE: tuple[str, ...] = ("한강", "한강동해", "한강서해")
+
 MISSINGNESS_DEFAULT = (
     ROOT / "metadata_outputs" / "hrfco_waterlevel_missingness_by_station_day.csv"
 )
@@ -69,15 +81,36 @@ def iter_api_chunks(
     return out
 
 
-def load_obscds_from_obs_target(max_stations: int | None) -> list[str]:
-    df = pd.read_csv(OBS_TARGET, index_col=0, dtype=str)
+def load_obscds_from_csv(
+    path: Path,
+    max_stations: int | None,
+    *,
+    station_offset: int = 0,
+    sphere_large: tuple[str, ...] | None = None,
+    operational_only: bool = False,
+) -> list[str]:
+    """관측소 코드 목록. ``sphere_large`` 가 None이면 CSV 전체 행(유효 codeObs).
+
+    정렬 후 ``station_offset`` 개를 건너뛰고(이어받기), 그다음 ``max_stations`` 만큼만 취한다.
+    예: 111번째 관측소부터 전부이면 ``station_offset=110``, ``max_stations=None``.
+    """
+    df = pd.read_csv(path, index_col=0, dtype=str)
+    if sphere_large is not None and "sphereLarge" in df.columns:
+        sl = df["sphereLarge"].astype(str).str.strip()
+        df = df.loc[sl.isin(sphere_large)].copy()
+    if operational_only and "inOperation" in df.columns:
+        df = df.loc[df["inOperation"].astype(str).str.strip() == "운영"].copy()
     s = (
         df["codeObs"]
         .astype(str)
         .str.replace(r"\.0$", "", regex=True)
         .str.strip()
     )
+    s = s[(s != "") & (s.str.lower() != "nan")]
     out = sorted(s.dropna().unique())
+    off = max(0, int(station_offset))
+    if off:
+        out = out[off:]
     if max_stations is not None:
         out = out[: int(max_stations)]
     return out
@@ -154,17 +187,55 @@ def make_s3():
     return s3, bucket
 
 
-def upload_day(s3, bucket: str, year: int, day: pd.Timestamp, frame: pd.DataFrame, dry_run: bool) -> None:
+def try_read_s3_waterlevel_day(s3, bucket: str, year: int, day: pd.Timestamp) -> pd.DataFrame | None:
+    """같은 일자 Parquet가 있으면 읽기 (없으면 None)."""
     d_iso = day.date().isoformat()
     key = f"hrfco/raw/{year}/waterlevel/date={d_iso}/data.parquet"
+    try:
+        obj = s3.get_object(Bucket=bucket, Key=key)
+        return pd.read_parquet(io.BytesIO(obj["Body"].read()))
+    except ClientError as e:
+        code = e.response.get("Error", {}).get("Code", "")
+        if code in ("404", "NoSuchKey", "NotFound"):
+            return None
+        raise
+    except Exception:
+        return None
+
+
+def upload_day(
+    s3,
+    bucket: str,
+    year: int,
+    day: pd.Timestamp,
+    frame: pd.DataFrame,
+    dry_run: bool,
+    *,
+    merge_existing_s3: bool,
+) -> None:
+    d_iso = day.date().isoformat()
+    key = f"hrfco/raw/{year}/waterlevel/date={d_iso}/data.parquet"
+    cur = frame.copy()
+    cur = cur.drop(columns=["date"], errors="ignore")
+
+    if merge_existing_s3 and not dry_run:
+        prev = try_read_s3_waterlevel_day(s3, bucket, year, day)
+        if prev is not None and not prev.empty:
+            prev = prev.drop(columns=["date"], errors="ignore")
+            cur = pd.concat([prev, cur], ignore_index=True)
+            cur = cur.drop_duplicates(subset=["obscd", "datetime"], keep="last")
+
+    cur = cur.sort_values(["obscd", "datetime"]).reset_index(drop=True)
+    cur["date"] = d_iso
+
     buf = io.BytesIO()
-    frame.to_parquet(buf, index=False)
+    cur.to_parquet(buf, index=False)
     body = buf.getvalue()
     if dry_run:
-        print(f"  [dry-run] would put {len(frame):6d} rows -> s3://{bucket}/{key} ({len(body)} bytes)")
+        print(f"  [dry-run] would put {len(cur):6d} rows -> s3://{bucket}/{key} ({len(body)} bytes)")
         return
     s3.put_object(Bucket=bucket, Key=key, Body=body, ContentType="application/octet-stream")
-    print(f"  put {len(frame):6d} rows -> s3://{bucket}/{key}")
+    print(f"  put {len(cur):6d} rows -> s3://{bucket}/{key}")
 
 
 def daily_grid_stats(merged: pd.DataFrame, day: pd.Timestamp) -> pd.DataFrame:
@@ -203,6 +274,7 @@ def merge_upload_accumulated(
     dry_run: bool,
     *,
     missingness_rows: list[pd.DataFrame] | None,
+    merge_existing_s3: bool,
 ) -> None:
     """같은 날짜에 여러 관측소 배치를 합쳐 한 번에 업로드."""
     for day in sorted(acc.keys()):
@@ -215,7 +287,7 @@ def merge_upload_accumulated(
         merged["date"] = day.date().isoformat()
         if missingness_rows is not None:
             missingness_rows.append(daily_grid_stats(merged.drop(columns=["date"]), day))
-        upload_day(s3, bucket, day.year, day, merged, dry_run)
+        upload_day(s3, bucket, day.year, day, merged, dry_run, merge_existing_s3=merge_existing_s3)
 
 
 def main() -> int:
@@ -223,10 +295,43 @@ def main() -> int:
     p.add_argument("--start", type=str, default="2023-03-01", help="시작일 (YYYY-MM-DD)")
     p.add_argument("--end", type=str, default="2025-10-31", help="종료일 (YYYY-MM-DD)")
     p.add_argument(
+        "--obs-csv",
+        type=str,
+        default=str(OBS_FINAL_STREAM_REG),
+        help="관측소 메타 CSV 경로 (기본: obsFinalStreamReg.csv)",
+    )
+    p.add_argument(
+        "--sphere-large",
+        type=str,
+        default=",".join(DEFAULT_HRFCO_SPHERE_LARGE),
+        help="sphereLarge 필터 — 쉼표 구분 (기본: 한강,한강동해,한강서해)",
+    )
+    p.add_argument(
+        "--no-sphere-filter",
+        action="store_true",
+        help="sphereLarge 필터를 쓰지 않고 CSV의 유효 codeObs 전부 사용",
+    )
+    p.add_argument(
+        "--operational-only",
+        action="store_true",
+        help="inOperation==운영 인 행만 사용",
+    )
+    p.add_argument(
         "--max-stations",
         type=int,
         default=None,
-        help="테스트용: 관측소 개수 상한 (미지정이면 obsTarget 전체)",
+        help="관측소 개수 상한 (offset 이후부터 최대 N개; 미지정이면 끝까지)",
+    )
+    p.add_argument(
+        "--station-offset",
+        type=int,
+        default=0,
+        help="정렬된 codeObs 목록에서 앞에서 건너뛸 개수 (110이면 111번째 관측소부터)",
+    )
+    p.add_argument(
+        "--s3-overwrite-day",
+        action="store_true",
+        help="일별 Parquet를 S3 기존 파일과 합치지 않고, 이번 실행 데이터만으로 덮어쓴다",
     )
     p.add_argument("--dry-run", action="store_true", help="S3 업로드 없이 요약만")
     p.add_argument("--sleep", type=float, default=0.12, help="관측소 간 API 간격(초)")
@@ -262,10 +367,35 @@ def main() -> int:
         return 1
 
     chunks = iter_api_chunks(start, end)
-    obscds = load_obscds_from_obs_target(args.max_stations)
-    if not obscds:
-        print("No station codes from obsTarget.", file=sys.stderr)
+
+    obs_path = Path(args.obs_csv)
+    if not obs_path.is_file():
+        print(f"obs CSV not found: {obs_path}", file=sys.stderr)
         return 1
+
+    if args.no_sphere_filter:
+        sphere_tuple: tuple[str, ...] | None = None
+    else:
+        parts = [x.strip() for x in str(args.sphere_large).split(",") if x.strip()]
+        sphere_tuple = tuple(parts) if parts else None
+
+    obscds = load_obscds_from_csv(
+        obs_path,
+        args.max_stations,
+        station_offset=int(args.station_offset),
+        sphere_large=sphere_tuple,
+        operational_only=bool(args.operational_only),
+    )
+    if not obscds:
+        print(f"No station codes from {obs_path} (filters applied).", file=sys.stderr)
+        return 1
+
+    flt = "no sphereLarge filter" if sphere_tuple is None else f"sphereLarge in {sphere_tuple}"
+    op = " + operational only" if args.operational_only else ""
+    sk = ""
+    if int(args.station_offset) > 0:
+        sk = f" | skip_first={int(args.station_offset)}"
+    print(f"Obs list: {obs_path.name} | {flt}{op}{sk} | stations={len(obscds)}")
 
     print(
         f"Stations: {len(obscds)} | range {args.start}..{args.end} | "
@@ -305,7 +435,16 @@ def main() -> int:
         return 2
 
     print("\nUploading by calendar day …")
-    merge_upload_accumulated(acc, s3, bucket, args.dry_run, missingness_rows=missingness_parts)
+    if not args.dry_run and not args.s3_overwrite_day:
+        print("(같은 date= 키가 있으면 기존 Parquet와 병합 후 업로드)", flush=True)
+    merge_upload_accumulated(
+        acc,
+        s3,
+        bucket,
+        args.dry_run,
+        missingness_rows=missingness_parts,
+        merge_existing_s3=not bool(args.s3_overwrite_day),
+    )
 
     if missingness_parts:
         miss_path = Path(args.missingness_out)

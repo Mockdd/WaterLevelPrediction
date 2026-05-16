@@ -1,0 +1,6 @@
+﻿station_id,n_hours_train,n_valid_wl_train,missing_rate_wl_train,impute_branch,min_required_hours,included_tft_train,exclude_reason
+1001602,0,0,1.0,unknown,174,N,no_waterlevel_in_train;missing_rate_ge_30pct;too_short_for_window
+1001620,0,0,1.0,unknown,174,N,no_waterlevel_in_train;missing_rate_ge_30pct;too_short_for_window
+1001622,0,0,1.0,unknown,174,N,no_waterlevel_in_train;missing_rate_ge_30pct;too_short_for_window
+1001623,0,0,1.0,unknown,174,N,no_waterlevel_in_train;missing_rate_ge_30pct;too_short_for_window
+1001625,0,0,1.0,unknown,174,N,no_waterlevel_in_train;missing_rate_ge_30pct;too_short_for_window

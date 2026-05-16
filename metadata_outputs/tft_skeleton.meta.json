@@ -1,0 +1,33 @@
+{
+  "stations_csv": "C:\\Users\\Aaron Cho\\Desktop\\ongoing\\FloodAX\\metadata_outputs\\obsTarget.csv",
+  "n_stations": 118,
+  "calendar_start": "2023-03-01",
+  "calendar_end": "2025-10-31",
+  "n_rows": 2755890,
+  "n_hours_per_station": 23355,
+  "rows_dropped_outside_split": 8142,
+  "split_counts": {
+    "train": 1554886,
+    "test": 603334,
+    "val": 597670
+  },
+  "splits": {
+    "train": [
+      "2023-03-01",
+      "2024-08-31"
+    ],
+    "val": [
+      "2024-09-01",
+      "2025-03-31"
+    ],
+    "test": [
+      "2025-04-01",
+      "2025-10-31"
+    ]
+  },
+  "s3_layout": {
+    "waterlevel": "hrfco/raw/{year}/waterlevel/date={yyyy-mm-dd}/data.parquet",
+    "rainfall": "kma/raw/{year}/aws_awsh_1h/date={yyyy-mm-dd}/data.parquet"
+  },
+  "output": "C:\\Users\\Aaron Cho\\Desktop\\ongoing\\FloodAX\\metadata_outputs\\tft_skeleton.parquet"
+}
