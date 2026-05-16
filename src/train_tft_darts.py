@@ -104,7 +104,6 @@ def add_experiment_args(p: argparse.ArgumentParser) -> None:
     g.add_argument("--n-epochs", type=int, default=50)
     g.add_argument("--learning-rate", type=float, default=1e-3)
     g.add_argument("--patience", type=int, default=5, help="early stopping patience (val 필요)")
-    g.add_argument("--num-workers", type=int, default=0, help="DataLoader workers (TFTModel; Colab: 0)")
     g.add_argument(
         "--lr-scheduler",
         choices=("none", "cosine"),
@@ -296,7 +295,6 @@ def build_tft_constructor_kwargs(
         "add_relative_index": args.add_relative_index,
         "batch_size": args.batch_size,
         "n_epochs": args.n_epochs,
-        "num_workers": args.num_workers,
         "optimizer_kwargs": {"lr": args.learning_rate},
         "pl_trainer_kwargs": pl_trainer_kwargs,
         "force_reset": True,
