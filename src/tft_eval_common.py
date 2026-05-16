@@ -29,11 +29,14 @@ def load_panel(processed_dir: Path) -> pd.DataFrame:
     return df
 
 
-def load_scalers(processed_dir: Path) -> dict[str, Any]:
+def load_scalers(processed_dir: Path) -> tuple[dict[str, Any], dict[str, float]]:
     path = processed_dir / "scalers.joblib"
     if not path.is_file():
         raise FileNotFoundError(f"Missing {path}")
-    return joblib.load(path)
+    obj = joblib.load(path)
+    if isinstance(obj, dict) and "scalers" in obj:
+        return obj["scalers"], obj.get("train_fill") or {}
+    return obj, {}
 
 
 def load_preprocess_meta(processed_dir: Path) -> dict[str, Any]:

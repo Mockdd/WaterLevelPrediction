@@ -317,7 +317,7 @@ def main() -> int:
         raise SystemExit("pip install 'darts[torch]' pytorch-lightning torch") from e
 
     panel = load_panel(processed_dir)
-    scalers = load_scalers(processed_dir)
+    scalers, _train_fill = load_scalers(processed_dir)
     meta = load_preprocess_meta(processed_dir)
     allowed = load_eligible_station_ids(Path(args.eligibility_csv))
     cfg = _resolve_train_cfg(args, exp_dir)

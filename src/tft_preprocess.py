@@ -48,6 +48,8 @@ DEFAULT_TEST_END = "2025-10-31"
 
 INTERP_LIMIT_H = 24
 MISSING_RATE_THRESH = 0.30
+# 홍수기(7~9월): IQR 이상치 제거 대상에서 제외 (before_training·운영 합의)
+FLOOD_SEASON_MONTHS = (7, 8, 9)
 
 OBS_STATIONS_CSV = ROOT / "metadata_outputs" / "obsFinalStreamReg.csv"
 OBS_TARGET = OBS_STATIONS_CSV  # alias (HRFCO ingest·3권 전체와 동일 기준)
@@ -59,6 +61,9 @@ ELIGIBILITY_OUT = ROOT / "metadata_outputs" / "tft_station_eligibility.csv"
 TARGET_COL = "wl"
 DIFF_COL = "wl_diff"
 RN_COL = "rn"
+
+# obsFinalStreamReg — 감사·분석용 parquet만 (TFT 입력에는 미사용)
+STATIC_META_COLS = ("korObs", "codeWatershed", "korStream_x")
 
 
 def _obscd_str(x: object) -> str | None:
@@ -85,6 +90,25 @@ def load_station_list(path: Path, max_stations: int | None) -> list[str]:
     if max_stations is not None:
         codes = codes[: int(max_stations)]
     return codes
+
+
+def build_static_station_table(meta_csv: Path, station_ids: list[str]) -> pd.DataFrame:
+    """관측소별 raw static 메타 (모델 입력 아님 → ``tft_static_station.parquet``)."""
+    df = pd.read_csv(meta_csv, index_col=0, dtype=str)
+    df["station_id"] = (
+        df["codeObs"].astype(str).str.replace(r"\.0$", "", regex=True).str.strip()
+    )
+    cols = ["station_id"] + [c for c in STATIC_META_COLS if c in df.columns]
+    meta = df[cols].drop_duplicates("station_id")
+    if "codeWatershed" in meta.columns:
+        meta["codeWatershed"] = (
+            meta["codeWatershed"]
+            .astype(str)
+            .str.replace(r"\.0$", "", regex=True)
+            .str.strip()
+        )
+    want = pd.DataFrame({"station_id": station_ids})
+    return want.merge(meta, on="station_id", how="left")
 
 
 def load_rainfall_map(path: Path) -> pd.DataFrame:
@@ -197,18 +221,85 @@ def build_station_eligibility(
     return pd.DataFrame(rows)
 
 
-def remove_outliers_iqr(s: pd.Series, k: float = 4.0) -> pd.Series:
-    v = s.dropna()
-    if len(v) < 10:
+def remove_outliers_iqr(
+    s: pd.Series,
+    *,
+    train_mask: pd.Series,
+    datetimes: pd.Series | None = None,
+    k: float = 4.0,
+) -> pd.Series:
+    """IQR 이상치 → NaN. 분위는 **train 구간만**; **7~9월** 시각은 제거하지 않음."""
+    tm = train_mask.reindex(s.index, fill_value=False)
+    train_vals = s.loc[tm].dropna()
+    if len(train_vals) < 10:
         return s
-    q1, q3 = v.quantile(0.25), v.quantile(0.75)
+    q1, q3 = train_vals.quantile(0.25), train_vals.quantile(0.75)
     iqr = q3 - q1
     if iqr <= 0:
         return s
     lo, hi = q1 - k * iqr, q3 + k * iqr
     out = s.copy()
-    out[(out < lo) | (out > hi)] = np.nan
+    is_out = (out < lo) | (out > hi)
+    if datetimes is not None:
+        dt = pd.to_datetime(datetimes).reindex(s.index)
+        is_out = is_out & ~dt.dt.month.isin(FLOOD_SEASON_MONTHS)
+    out.loc[is_out] = np.nan
     return out
+
+
+def clean_wl_series(
+    g: pd.DataFrame,
+    *,
+    value_col: str,
+    interp_limit: int,
+) -> tuple[pd.Series, pd.Series, str]:
+    """수위 1관측소: train-only IQR(7~9월 보호) → 30% 분기 보간."""
+    train_mask = g["split"] == "train"
+    raw = g[value_col].copy()
+    after_outlier = remove_outliers_iqr(
+        raw, train_mask=train_mask, datetimes=g["datetime"]
+    )
+    wl_imp, was_imp, branch = impute_waterlevel(
+        after_outlier, train_mask=train_mask, interp_limit=interp_limit
+    )
+    return wl_imp, was_imp, branch
+
+
+def build_cleaned_wl_long(
+    wl_long: pd.DataFrame,
+    split_df: pd.DataFrame,
+    station_ids: set[str],
+    interp_limit: int,
+) -> tuple[pd.DataFrame, dict[str, pd.Series]]:
+    """
+    S3 long 수위 → 관측소별 정제(이상치·보간) long + ``attach_upstream`` 용 dict.
+
+    split_df: ``datetime``, ``split`` (스켈레톤에서 추출).
+    """
+    sk_split = split_df[["datetime", "split"]].drop_duplicates()
+    frames: list[pd.DataFrame] = []
+    wl_by_st: dict[str, pd.Series] = {}
+    for sid in sorted(station_ids):
+        sub = wl_long[wl_long["obscd"] == sid].copy()
+        if sub.empty:
+            continue
+        sub = sub.merge(sk_split, on="datetime", how="left")
+        sub = sub.sort_values("datetime").reset_index(drop=True)
+        wl_imp, was_imp, branch = clean_wl_series(sub, value_col="value", interp_limit=interp_limit)
+        sub["station_id"] = sid
+        sub[TARGET_COL] = wl_imp.values
+        sub["was_imputed"] = was_imp.values
+        sub["impute_branch"] = branch
+        frames.append(
+            sub[["station_id", "datetime", TARGET_COL, "was_imputed", "impute_branch"]]
+        )
+        wl_by_st[sid] = pd.Series(wl_imp.values, index=pd.to_datetime(sub["datetime"]))
+    if not frames:
+        empty = pd.DataFrame(
+            columns=["station_id", "datetime", TARGET_COL, "was_imputed", "impute_branch"]
+        )
+        return empty, wl_by_st
+    return pd.concat(frames, ignore_index=True), wl_by_st
 
 
 def add_time_features(df: pd.DataFrame) -> pd.DataFrame:
@@ -271,13 +362,11 @@ def _upstream_slot_series(
 
 def attach_upstream(
     panel: pd.DataFrame,
-    wl_long: pd.DataFrame,
+    wl_by_st: dict[str, pd.Series],
     mapping: pd.DataFrame,
     lag_tbl: pd.DataFrame,
 ) -> pd.DataFrame:
-    """상류 수위 lag shift — 하류 시각 t 에 상류 ``upstream(t - L)`` (pandas ``shift(L)``)."""
-    wl_p = wl_long.rename(columns={"obscd": "station_id", "value": "wl_src"})
-    wl_by_st = {k: g.set_index("datetime")["wl_src"] for k, g in wl_p.groupby("station_id")}
+    """상류 수위 lag shift — **정제된** 수위 시계열에서 ``upstream(t - L)``."""
     map_idx = mapping.set_index("station_id")
     lag_idx = lag_tbl.set_index("station_id")
 
@@ -294,32 +383,36 @@ def attach_upstream(
     return pd.concat(parts, ignore_index=True)
 
 
-def fit_transform_scalers(
+def fit_scalers_on_train(
     train_df: pd.DataFrame,
     cols: list[str],
-) -> tuple[pd.DataFrame, dict[str, StandardScaler]]:
-    """GroupNormalizer 대체: 관측소별 train 구간만 fit."""
+) -> tuple[dict[str, StandardScaler], dict[str, float]]:
+    """관측소별·컬럼별 StandardScaler — **train 행만** fit, fill도 train 평균만."""
     scalers: dict[str, StandardScaler] = {}
-    out = train_df.copy()
+    train_fill: dict[str, float] = {}
     for sid, g in train_df.groupby("station_id"):
-        idx = g.index
         for col in cols:
             if col not in g.columns:
                 continue
             key = f"{sid}|{col}"
-            sc = StandardScaler()
             v = g[[col]].astype(float)
-            mask = v.notna().all(axis=1)
+            mask = v[col].notna()
             if mask.sum() < 2:
                 continue
-            sc.fit(v[mask])
+            sc = StandardScaler()
+            sc.fit(v.loc[mask])
             scalers[key] = sc
-            transformed = sc.transform(v.fillna(v[mask].mean()))
-            out.loc[idx, col] = transformed.ravel()
-    return out, scalers
+            train_fill[key] = float(v.loc[mask, col].mean())
+    return scalers, train_fill
 
 
-def apply_scalers(df: pd.DataFrame, scalers: dict[str, StandardScaler], cols: list[str]) -> pd.DataFrame:
+def apply_scalers(
+    df: pd.DataFrame,
+    scalers: dict[str, StandardScaler],
+    train_fill: dict[str, float],
+    cols: list[str],
+) -> pd.DataFrame:
+    """val/test NaN 채움은 **train에서 저장한 평균**만 사용 (누수 방지)."""
     out = df.copy()
     for sid, g in df.groupby("station_id"):
         idx = g.index
@@ -328,8 +421,7 @@ def apply_scalers(df: pd.DataFrame, scalers: dict[str, StandardScaler], cols: li
             if key not in scalers or col not in g.columns:
                 continue
             v = g[[col]].astype(float)
-            mask = v[col].notna()
-            fill = float(v.loc[mask, col].mean()) if mask.any() else 0.0
+            fill = train_fill.get(key, 0.0)
             out.loc[idx, col] = scalers[key].transform(v.fillna(fill)).ravel()
     return out
 
@@ -363,11 +455,12 @@ def build_panel(args: argparse.Namespace) -> tuple[pd.DataFrame, dict]:
     print("Loading S3 KMA rainfall (RN) …")
     rn_long = load_kma_rainfall_range(s3, bucket, start, end, aws_ids)
 
-    panel = sk.merge(
-        wl_long.rename(columns={"obscd": "station_id", "value": TARGET_COL}),
-        on=["station_id", "datetime"],
-        how="left",
+    print("Cleaning waterlevel (train-only IQR; Jul–Sep protected) …")
+    cleaned_wl_long, wl_by_st = build_cleaned_wl_long(
+        wl_long, sk, wl_obscds, args.interp_limit
     )
+
+    panel = sk.merge(cleaned_wl_long, on=["station_id", "datetime"], how="left")
 
     panel = panel.merge(rain_map, on="station_id", how="left")
     panel = panel.merge(
@@ -378,22 +471,14 @@ def build_panel(args: argparse.Namespace) -> tuple[pd.DataFrame, dict]:
     )
     panel = panel.drop(columns=["stn_id"], errors="ignore")
 
-    panel = attach_upstream(panel, wl_long, mapping, lag_tbl)
+    panel = attach_upstream(panel, wl_by_st, mapping, lag_tbl)
 
     parts: list[pd.DataFrame] = []
     for sid, g in panel.groupby("station_id", sort=True):
         g = g.sort_values("datetime").copy()
         train_mask = g["split"] == "train"
-        g[TARGET_COL] = remove_outliers_iqr(g[TARGET_COL])
-        wl_imp, was_imp, wl_branch = impute_waterlevel(
-            g[TARGET_COL], train_mask=train_mask, interp_limit=args.interp_limit
-        )
-        g[TARGET_COL] = wl_imp
-        g["was_imputed"] = was_imp
-        g["impute_branch"] = wl_branch
         for uc in ("upstream_wl_1", "upstream_wl_2"):
             if uc in g.columns:
-                g[uc] = remove_outliers_iqr(g[uc])
                 g[uc], _, _ = impute_waterlevel(
                     g[uc], train_mask=train_mask, interp_limit=args.interp_limit
                 )
@@ -415,8 +500,8 @@ def build_panel(args: argparse.Namespace) -> tuple[pd.DataFrame, dict]:
         for c in [TARGET_COL, DIFF_COL, RN_COL, "upstream_wl_1", "upstream_wl_2"]
         if c in panel.columns
     ]
-    _, scalers = fit_transform_scalers(panel.loc[panel["split"] == "train"], scale_cols)
-    panel_scaled = apply_scalers(panel, scalers, scale_cols)
+    scalers, train_fill = fit_scalers_on_train(panel.loc[panel["split"] == "train"], scale_cols)
+    panel_scaled = apply_scalers(panel, scalers, train_fill, scale_cols)
 
     n_included = int((eligibility["included_tft_train"] == "Y").sum())
     meta = {
@@ -431,8 +516,22 @@ def build_panel(args: argparse.Namespace) -> tuple[pd.DataFrame, dict]:
         "encoder_length": args.encoder_length,
         "prediction_length": args.prediction_length,
         "eligibility_csv": str(Path(args.eligibility_out).resolve()),
+        "outlier_iqr_train_only": True,
+        "outlier_flood_season_months_protected": list(FLOOD_SEASON_MONTHS),
+        "upstream_from_cleaned_wl": True,
+        "static_station_meta": True,
+        "static_used_in_model": False,
     }
-    return panel_scaled, {"scalers": scalers, "meta": meta, "eligibility": eligibility}
+    static_station = build_static_station_table(
+        Path(args.stations_meta_csv), stations
+    )
+    return panel_scaled, {
+        "scalers": scalers,
+        "train_fill": train_fill,
+        "meta": meta,
+        "eligibility": eligibility,
+        "static_station": static_station,
+    }
 
 
 def main() -> int:
@@ -440,6 +539,11 @@ def main() -> int:
     p.add_argument("--start", default="2023-03-01")
     p.add_argument("--end", default="2025-10-31")
     p.add_argument("--stations-csv", default=str(OBS_TARGET))
+    p.add_argument(
+        "--stations-meta-csv",
+        default=str(OBS_STATIONS_CSV),
+        help="관측소 static raw 메타 (tft_static_station.parquet; TFT 미사용)",
+    )
     p.add_argument("--rainfall-map-csv", default=str(RAIN_MAP))
     p.add_argument("--upstream-map-csv", default=str(UPSTREAM_MAP))
     p.add_argument("--lag-manifest", default=str(LAG_MANIFEST))
@@ -473,9 +577,20 @@ def main() -> int:
 
     import joblib
 
-    joblib.dump(aux["scalers"], out_dir / "scalers.joblib")
+    joblib.dump(
+        {"scalers": aux["scalers"], "train_fill": aux["train_fill"]},
+        out_dir / "scalers.joblib",
+    )
+    static_path = out_dir / "tft_static_station.parquet"
+    aux["static_station"].to_parquet(static_path, index=False)
+    aux["meta"]["static_station_parquet"] = str(static_path.resolve())
     with open(out_dir / "preprocess_meta.json", "w", encoding="utf-8") as f:
         json.dump(aux["meta"], f, indent=2, ensure_ascii=False)
+    n_meta = aux["static_station"][list(STATIC_META_COLS)].notna().all(axis=1).sum()
+    print(
+        f"Wrote static station meta ({n_meta}/{len(aux['static_station'])} "
+        f"with full meta, not used in TFT) → {static_path}"
+    )
 
     for split in ("train", "val", "test"):
         sub = panel[panel["split"] == split]

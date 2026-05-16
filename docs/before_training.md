@@ -22,7 +22,7 @@
 | 3 | CCF로 상류별 time lag 추정 → `metadata_outputs/upstream_lag_ccf_by_stationv20260514_0735.csv |  
 | 4 | `station_id` × `datetime` 스켈레톤 |
 | 5 | 수위 long merge |
-| 6 | 관측소 static 메타 merge |
+| 6 | 관측소 static 메타 → `tft_static_station.parquet` (감사·분석용; **TFT 입력 미사용**) |
 | 7 | 강수 merge ([1] 매핑 정보 기반 등) |
 | 8 | `upstream_wl_1`, `upstream_wl_2` — `shift(lag)` |
 | 9 | 이상치 제거 |
@@ -154,6 +154,23 @@ CCF(Q1)와 동일하게 **결측률 판단은 train 구간만** 쓴다(val/test�
 - `src/eval_tft_darts.py` → val/test rolling forecast·지표 (상세: [`docs/tft_evaluation.md`](tft_evaluation.md)).
 - 합숙/재현 시 **“메타 관측소 N개 중 학습 M개”** 를 자격 표와 함께 제시한다.
 
+## 1.5.1 데이터 누수 점검 (전처리 `tft_preprocess.py`)
+
+| 항목 | 누수 위험 | 조치 |
+|------|-----------|------|
+| IQR 분위 | val/test 포함 시 통계 누수 | **train 구간만** 분위 계산 |
+| 홍수기(7~9월) 피크 | 이상치 제거로 피크 소실 | **7~9월 시각 IQR 제거 면제** |
+| `StandardScaler` fit | val/test 포함 fit | **train 행만** fit |
+| 스케일 전 NaN fill | val/test 평균으로 채움 | **train 평균** (`train_fill` in `scalers.joblib`) |
+| 30% 결측 판단 | — | **train 구간** `isna().mean()` (보간 전) |
+| 상류 `shift` | 원시 S3 vs 하류 정제 불일치 | **정제 수위**로 `shift` 후 상류만 gap 보간 |
+| split 라벨 | — | 시각만 사용, 미래 수위 통계 없음 |
+| CCF lag 산출 | 별도 스크립트 | train 구간 고정; 학습 입력과 **동일 L2** 권장(이상치·7~9월 정책 맞춤) |
+| TFT `fit` | val early stopping | **허용**(하이퍼 선택); test는 `eval_tft_darts` hold-out 1회 |
+| `rn` fillna(0) | test 강수 미래 정보 없음 | 관측 merge만; **미래 강수 예측 아님** |
+
+`preprocess_meta.json`: `outlier_iqr_train_only`, `outlier_flood_season_months_protected`, `upstream_from_cleaned_wl`.
+
 ## 1.6 Validation / test 평가
 
 - **문서:** [`docs/tft_evaluation.md`](tft_evaluation.md) — 데이터셋 정의, 지표(MAE·RMSE·NSE·MAPE·bias), rolling 평가 절차, 출력 파일.
@@ -166,6 +183,8 @@ CCF(Q1)와 동일하게 **결측률 판단은 train 구간만** 쓴다(val/test�
 |------|------|------|
 | 관측소 자격 CSV | **구현됨** | `tft_station_eligibility.csv` |
 | train 구간 30% 분기 보간 | **구현됨** | 전 구간 시계열에 동일 분기 적용 |
+| IQR 이상치 | **구현됨** | train만 분위; **7~9월은 제거 안 함**; 상류는 정제 수위 `shift` |
+| 스케일러 누수 방지 | **구현됨** | `StandardScaler` train fit; val/test fill은 train 평균만 |
 | 윈도 내 장기 결측 샘플 제외 | **미구현** | `waterlevel_missing_handling` M2 — Darts 샘플러·커스텀 필터 후속 |
 | `obsFinalStreamReg` vs `obsTarget` | **기본 `obsFinalStreamReg`** | 한강 3권만: `--stations-csv metadata_outputs/obsTarget.csv` |
 | TFT I/O 상세 | [`docs/tft_io_spec.md`](tft_io_spec.md) | 입출력·Colab·팀 공유 산출물 |

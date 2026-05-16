@@ -18,6 +18,7 @@ import numpy as np
 import pandas as pd
 
 from tft_preprocess import (
+    INTERP_LIMIT_H,
     LAG_MANIFEST,
     RAIN_MAP,
     ROOT,
@@ -25,6 +26,7 @@ from tft_preprocess import (
     _obscd_str,
     _parse_lag0,
     attach_upstream,
+    build_cleaned_wl_long,
     collect_waterlevel_station_ids,
     load_lag_table,
     load_rainfall_map,
@@ -60,11 +62,18 @@ def build_raw_panel(
     rn_long: pd.DataFrame,
     mapping: pd.DataFrame,
     lag_tbl: pd.DataFrame,
-) -> pd.DataFrame:
-    """스케일 전 merge·upstream·RN (패널 키 기준)."""
+    *,
+    interp_limit: int = INTERP_LIMIT_H,
+) -> tuple[pd.DataFrame, dict[str, pd.Series]]:
+    """스케일 전 merge·upstream·RN — ``tft_preprocess.build_panel`` 과 동일 축."""
+    from tft_preprocess import impute_waterlevel
+
     keys = panel[["station_id", "datetime", "split"]].drop_duplicates()
+    station_ids = list(keys["station_id"].astype(str).unique())
+    wl_obscds = collect_waterlevel_station_ids(station_ids, mapping)
+    cleaned_long, wl_by_st = build_cleaned_wl_long(wl_long, keys, wl_obscds, interp_limit)
     out = keys.merge(
-        wl_long.rename(columns={"obscd": "station_id", "value": "wl"}),
+        cleaned_long[["station_id", "datetime", "wl"]],
         on=["station_id", "datetime"],
         how="left",
     )
@@ -76,7 +85,18 @@ def build_raw_panel(
         how="left",
     )
     out = out.drop(columns=["stn_id"], errors="ignore")
-    return attach_upstream(out, wl_long, mapping, lag_tbl)
+    out = attach_upstream(out, wl_by_st, mapping, lag_tbl)
+    parts: list[pd.DataFrame] = []
+    for _, g in out.groupby("station_id", sort=True):
+        g = g.sort_values("datetime").copy()
+        train_mask = g["split"] == "train"
+        for uc in ("upstream_wl_1", "upstream_wl_2"):
+            if uc in g.columns:
+                g[uc], _, _ = impute_waterlevel(
+                    g[uc], train_mask=train_mask, interp_limit=interp_limit
+                )
+        parts.append(g)
+    return pd.concat(parts, ignore_index=True), wl_by_st
 
 
 def verify_upstream_slots(
@@ -108,15 +128,14 @@ def verify_upstream_slots(
 
 def spot_check_lag_shift(
     raw: pd.DataFrame,
-    wl_long: pd.DataFrame,
+    wl_by_st: dict[str, pd.Series],
     mapping: pd.DataFrame,
     lag_tbl: pd.DataFrame,
     *,
     atol: float = 1e-9,
 ) -> pd.DataFrame:
-    """lag>0 관측소: upstream_wl_k(t) == wl[upstream_k](t-L)."""
-    wl_p = wl_long.rename(columns={"obscd": "station_id", "value": "wl"})
-    wl_by = {k: g.set_index("datetime")["wl"] for k, g in wl_p.groupby("station_id")}
+    """lag>0 관측소: upstream_wl_k(t) == cleaned wl[upstream_k](t-L)."""
+    wl_by = wl_by_st
     map_idx = mapping.set_index("station_id")
     lag_idx = lag_tbl.set_index("station_id")
     rows = []
@@ -211,7 +230,7 @@ def main() -> int:
     rn_long = load_kma_rainfall_range(s3, bucket, start, end, aws_ids, verbose=False)
     wl_obscds = collect_waterlevel_station_ids(stations, mapping)
     wl_long = load_waterlevel_range(s3, bucket, start, end, wl_obscds, verbose=False)
-    raw = build_raw_panel(panel, wl_long, rain_map, rn_long, mapping, lag_tbl)
+    raw, wl_by_st = build_raw_panel(panel, wl_long, rain_map, rn_long, mapping, lag_tbl)
     rn_join = raw[["station_id", "datetime", "stn_id_aws", "rn"]].merge(
         rn_long.rename(columns={"rn": "rn_s3"}),
         left_on=["stn_id_aws", "datetime"],
@@ -228,7 +247,7 @@ def main() -> int:
         col = f"upstream_wl_{slot}_mask_ok"
         n_ok = int(up_chk[col].sum())
         print(f"\n[1] upstream_wl_{slot}_mask (scaled panel vs raw): {n_ok:,} / {len(up_chk):,} OK")
-    spot = spot_check_lag_shift(raw, wl_long, mapping, lag_tbl)
+    spot = spot_check_lag_shift(raw, wl_by_st, mapping, lag_tbl)
     if len(spot):
         print(f"  lag>0 spot checks: {spot['spot_ok'].sum()} / {len(spot)} OK")
         print(spot.to_string(index=False))

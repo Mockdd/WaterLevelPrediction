@@ -110,9 +110,10 @@ WORK      = "/content/drive/MyDrive/floodax/experiments/tft" # 학습 산출
 | # | 경로 | 용도 |
 |---|------|------|
 | 7 | `{processed_dir}/tft_panel.parquet` | 학습·평가 입력 패널 (스케일됨) |
-| 8 | `{processed_dir}/tft_{train,val,test}.parquet` | split별 (선택) |
-| 9 | `eval_{split}/metrics_*.json` | 성능 보고 |
-| 10 | `eval_{split}/predictions_*.parquet` | 예측 상세 |
+| 8 | `{processed_dir}/tft_static_station.parquet` | 관측소 raw 메타 (`korObs`, `codeWatershed`, `korStream_x`); **TFT 미사용** |
+| 9 | `{processed_dir}/tft_{train,val,test}.parquet` | split별 (선택) |
+| 10 | `eval_{split}/metrics_*.json` | 성능 보고 |
+| 11 | `eval_{split}/predictions_*.parquet` | 예측 상세 |
 
 ### 3.3 전처리부터 재현 (S3 접근 가능한 팀원)
 
@@ -190,6 +191,19 @@ WORK      = "/content/drive/MyDrive/floodax/experiments/tft" # 학습 산출
 
 **스케일 대상** (`preprocess_meta.scale_cols`): `wl`, `wl_diff`, `rn`, `upstream_wl_1`, `upstream_wl_2`  
 **스케일 키** (`scalers.joblib`): `"{station_id}|{col}"` → `sklearn.preprocessing.StandardScaler`
+
+### 5.1 관측소 static 메타 (`tft_static_station.parquet`)
+
+전처리 시 `obsFinalStreamReg.csv`(기본 `--stations-meta-csv`)에서 추출. **패널·TFT에 merge하지 않음** (추론 시 미등록 범주 문제 회피).
+
+| 컬럼 | 설명 |
+|------|------|
+| `station_id` | `codeObs` (패널과 동일) |
+| `korObs` | 관측소 한글명 |
+| `codeWatershed` | 유역 코드 |
+| `korStream_x` | 하천명(정규화) |
+
+`preprocess_meta.json`: `static_used_in_model: false`, `static_station_parquet` 경로.
 
 ---
 
