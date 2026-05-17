@@ -71,7 +71,6 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--max-series", type=int, default=None)
     p.add_argument("--leads", type=str, default="1,2,3,6", help="리드(시간)별 지표")
     p.add_argument("--out-dir", type=str, default=None, help="기본: work-dir/experiment-name/eval_{split}")
-    p.add_argument("--num-workers", type=int, default=0)
     return p
 
 
