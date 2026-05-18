@@ -1,70 +1,73 @@
-# Getting Started with Create React App
+# FloodAX - 홍수대응 의사결정 지원 플랫폼 (Frontend)
 
-This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
+한강 유역 291개 관측소의 TFT 기반 수위 예측 결과를 실시간으로 시각화하는 관제 대시보드입니다.
 
-## Available Scripts
+## 주요 기능
 
-In the project directory, you can run:
+- **실시간 관제 지도**: 291개 관측소 신호등 마커 (경보/주의/정상/데이터없음)
+- **예측 수위 차트**: h1~h6 (1~6시간 후) 예측 결과 및 신뢰구간 시각화
+- **과거 24시간 수위**: 실측 수위 시계열 비교
+- **대응 우선순위 패널**: 경보·주의 관측소 우선 정렬, 관측소 검색
+- **수동 갱신**: 집중호우 상황에서 즉시 예측 재계산
+- **반응형 UI**: PC 3분할 구조 및 모바일 하단 시트 지원
 
-### `npm start`
+## 기술 스택
 
-Runs the app in the development mode.\
-Open [http://localhost:3000](http://localhost:3000) to view it in your browser.
+- React 19 (Create React App)
+- Leaflet + react-leaflet (지도)
+- Vworld WMTS 타일 (국토지리정보원)
+- Recharts (차트)
+- axios (HTTP)
 
-The page will reload when you make changes.\
-You may also see any lint errors in the console.
+## 시작하기
 
-### `npm test`
+### 환경 변수 설정
 
-Launches the test runner in the interactive watch mode.\
-See the section about [running tests](https://facebook.github.io/create-react-app/docs/running-tests) for more information.
+프로젝트 루트에 `.env.local` 파일 생성:
 
-### `npm run build`
+```
+REACT_APP_VWORLD_KEY=발급받은_Vworld_API_키
+REACT_APP_API_BASE_URL=https://백엔드_ngrok_URL
+```
 
-Builds the app for production to the `build` folder.\
-It correctly bundles React in production mode and optimizes the build for the best performance.
+### 설치 및 실행
 
-The build is minified and the filenames include the hashes.\
-Your app is ready to be deployed!
+```bash
+npm install
+npm start
+```
 
-See the section about [deployment](https://facebook.github.io/create-react-app/docs/deployment) for more information.
+브라우저에서 [http://localhost:3000](http://localhost:3000) 접속
 
-### `npm run eject`
+## 폴더 구조
 
-**Note: this is a one-way operation. Once you `eject`, you can't go back!**
+```
+src/
+├── App.js                  # 루트 컴포넌트, 데이터 fetch
+├── api/
+│   └── index.js            # API 클라이언트
+├── components/
+│   ├── Header/             # 헤더, 실시간 시계, 갱신 버튼
+│   ├── Map/                # Leaflet 지도
+│   ├── Marker/             # 관측소 신호등 마커
+│   ├── Panel/              # 대응 우선순위 패널, 상세 정보 창
+│   ├── Chart/              # 예측/관측 수위 차트
+│   └── Timeline/           # 줌 확대 시 타임라인 뷰
+├── constants/
+│   └── colors.js           # 색상 시스템
+└── hooks/
+```
 
-If you aren't satisfied with the build tool and configuration choices, you can `eject` at any time. This command will remove the single build dependency from your project.
+## API 연동
 
-Instead, it will copy all the configuration files and the transitive dependencies (webpack, Babel, ESLint, etc) right into your project so you have full control over them. All of the commands except `eject` will still work, but they will point to the copied scripts so you can tweak them. At this point you're on your own.
+백엔드 API는 `setupProxy.js`를 통해 프록시 처리됩니다.
+ngrok URL이 바뀐 경우 `.env.local`의 `REACT_APP_API_BASE_URL`을 업데이트하세요.
 
-You don't have to ever use `eject`. The curated feature set is suitable for small and middle deployments, and you shouldn't feel obligated to use this feature. However we understand that this tool wouldn't be useful if you couldn't customize it when you are ready for it.
+| 엔드포인트 | 설명 |
+|---|---|
+| `GET /stations/with-status` | 전체 관측소 + 예측 결과 |
+| `GET /stations/{id}/predictions` | 특정 관측소 예측 |
+| `GET /stations/{id}/observations` | 과거 24시간 실측 수위 |
+| `GET /alerts` | 경보·주의 관측소 목록 |
+| `POST /admin/refresh` | 수동 데이터 갱신 (1~3분 소요) |
 
-## Learn More
-
-You can learn more in the [Create React App documentation](https://facebook.github.io/create-react-app/docs/getting-started).
-
-To learn React, check out the [React documentation](https://reactjs.org/).
-
-### Code Splitting
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/code-splitting](https://facebook.github.io/create-react-app/docs/code-splitting)
-
-### Analyzing the Bundle Size
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size](https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size)
-
-### Making a Progressive Web App
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app](https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app)
-
-### Advanced Configuration
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/advanced-configuration](https://facebook.github.io/create-react-app/docs/advanced-configuration)
-
-### Deployment
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/deployment](https://facebook.github.io/create-react-app/docs/deployment)
-
-### `npm run build` fails to minify
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify](https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify)
