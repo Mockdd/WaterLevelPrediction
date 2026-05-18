@@ -1,0 +1,50 @@
+# 큰 파일
+model/tft_model.pt
+model/tft_model.pt.ckpt
+model/scalers.joblib
+model/scalers_ref.joblib
+model/*.parquet
+*.parquet
+
+# 학습 데이터
+data/
+tft_processed/
+tft_48_v1/
+
+# 민감 정보
+database.py
+.env
+
+# Python
+__pycache__/
+*.pyc
+*.egg-info/
+
+# 가상환경
+venv/
+env/
+.venv/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# 로그
+*.log
+output/
+*.zip
+
+# TensorBoard 로그
+events.out.tfevents.*
+*.tfevents.*
+lightning_logs/
+tb_logs/
+checkpoints/
+
+# 체크포인트
+*.ckpt
+*.pt
