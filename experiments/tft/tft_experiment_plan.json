@@ -1,0 +1,313 @@
+{
+  "schema_version": "1.0",
+  "project": "FloodAX",
+  "model": "TemporalFusionTransformer (Darts)",
+  "reference_doc": "docs/before_training.md",
+  "created": "2026-05-16",
+  "cli_entrypoints": {
+    "preprocess": "python -u src/tft_preprocess.py",
+    "train": "python -u src/train_tft_darts.py",
+    "eval": "python -u src/eval_tft_darts.py",
+    "verify_mappings": "python -u src/verify_tft_sample_mappings.py"
+  },
+  "fixed_constraints": {
+    "calendar": {
+      "start": "2023-03-01",
+      "end": "2025-10-31",
+      "freq": "1H"
+    },
+    "splits": {
+      "train": ["2023-03-01", "2024-08-31"],
+      "val": ["2024-09-01", "2025-03-31"],
+      "test": ["2025-04-01", "2025-10-31"]
+    },
+    "window": {
+      "encoder_length_E": 168,
+      "prediction_length_H": 6,
+      "min_required_hours": 174
+    },
+    "missing_policy": {
+      "train_missing_rate_thresh": 0.3,
+      "interp_limit_h": 24,
+      "eligibility_column": "included_tft_train"
+    },
+    "s3_layout": {
+      "waterlevel": "hrfco/raw/{year}/waterlevel/date={yyyy-mm-dd}/data.parquet",
+      "rainfall": "kma/raw/{year}/aws_awsh_1h/date={yyyy-mm-dd}/data.parquet"
+    },
+    "metadata": {
+      "stations_csv_default": "metadata_outputs/obsFinalStreamReg.csv",
+      "rainfall_map_csv": "metadata_outputs/obsWaterLevel_top1.csv",
+      "upstream_map_csv": "metadata_outputs/upstream_mapping_must.csv",
+      "lag_manifest": "metadata_outputs/upstream_lag_manifest.json",
+      "lag_csv_active": "metadata_outputs/upstream_lag_ccf_by_station_v20260514_0735.csv"
+    }
+  },
+  "feature_schema": {
+    "target": "wl",
+    "past_covariates_default": [
+      "wl_diff",
+      "rn",
+      "upstream_wl_1",
+      "upstream_wl_2",
+      "upstream_wl_1_mask",
+      "upstream_wl_2_mask",
+      "was_imputed"
+    ],
+    "future_covariates_default": [
+      "hour_sin",
+      "hour_cos",
+      "month_sin",
+      "month_cos"
+    ],
+    "scaling": "per-station StandardScaler on train split only (tft_preprocess scalers.joblib)"
+  },
+  "phases": [
+    {
+      "id": "P0",
+      "name": "pipeline_smoke",
+      "goal": "전처리·매핑·1-epoch 학습 경로 검증",
+      "depends_on": []
+    },
+    {
+      "id": "P1",
+      "name": "sample_train_window",
+      "goal": "짧은 train 구간·소수 관측소로 학습 루프 안정화",
+      "depends_on": ["P0"]
+    },
+    {
+      "id": "P2",
+      "name": "full_baseline",
+      "goal": "전 관측소·전 기간 전처리 + 기본 하이퍼 TFT",
+      "depends_on": ["P1"]
+    },
+    {
+      "id": "P3",
+      "name": "ablations",
+      "goal": "공변량·모델 크기·학습률 등 비교",
+      "depends_on": ["P2"]
+    },
+    {
+      "id": "P4",
+      "name": "test_eval",
+      "goal": "고정 test 구간 리드별 성능·분위 예측 보고",
+      "depends_on": ["P2"]
+    }
+  ],
+  "experiments": [
+    {
+      "id": "exp00_smoke_preprocess",
+      "phase": "P0",
+      "status": "done",
+      "description": "S3 HRFCO+KMA 샘플 train 구간 전처리 및 매핑 검증",
+      "preprocess": {
+        "start": "2024-06-15",
+        "end": "2024-06-22",
+        "max_stations": 35,
+        "out_dir": "data/tft_processed_sample_train",
+        "eligibility_out": "data/tft_processed_sample_train/tft_station_eligibility.csv",
+        "stations_csv": "metadata_outputs/obsFinalStreamReg.csv",
+        "encoder_length": 168,
+        "prediction_length": 6,
+        "interp_limit": 24
+      },
+      "verify": {
+        "panel": "data/tft_processed_sample_train/tft_train.parquet",
+        "report": "data/tft_processed_sample_train/mapping_verify_summary.csv"
+      },
+      "train": null,
+      "success_criteria": [
+        "verify_tft_sample_mappings PASS",
+        "tft_train.parquet > 0 rows",
+        "eligibility CSV written (main path not overwritten)"
+      ]
+    },
+    {
+      "id": "exp01_smoke_train",
+      "phase": "P0",
+      "status": "planned",
+      "description": "샘플 패널 1 epoch GPU/CPU 스모크",
+      "preprocess": null,
+      "train": {
+        "processed_dir": "data/tft_processed_sample_train",
+        "eligibility_csv": "data/tft_processed_sample_train/tft_station_eligibility.csv",
+        "experiment_name": "smoke_sample_v1",
+        "work_dir": "experiments/tft",
+        "n_epochs": 1,
+        "batch_size": 64,
+        "max_series": 5,
+        "input_chunk_length": 168,
+        "output_chunk_length": 6,
+        "accelerator": "auto",
+        "seed": 42
+      },
+      "success_criteria": [
+        "checkpoint saved under work_dir/experiment_name",
+        "no OOM on target hardware"
+      ]
+    },
+    {
+      "id": "exp10_sample_2w",
+      "phase": "P1",
+      "status": "planned",
+      "description": "train 2주·관측소 50 — 짧은 수렴 확인",
+      "preprocess": {
+        "start": "2024-06-01",
+        "end": "2024-06-14",
+        "max_stations": 50,
+        "out_dir": "data/tft_processed_sample_2w",
+        "eligibility_out": "data/tft_processed_sample_2w/tft_station_eligibility.csv"
+      },
+      "train": {
+        "processed_dir": "data/tft_processed_sample_2w",
+        "eligibility_csv": "data/tft_processed_sample_2w/tft_station_eligibility.csv",
+        "experiment_name": "sample_2w_baseline",
+        "work_dir": "experiments/tft",
+        "n_epochs": 20,
+        "patience": 5,
+        "batch_size": 128,
+        "learning_rate": 0.001,
+        "hidden_size": 64,
+        "input_chunk_length": 168,
+        "output_chunk_length": 6
+      }
+    },
+    {
+      "id": "exp20_full_preprocess",
+      "phase": "P2",
+      "status": "planned",
+      "description": "obsFinalStreamReg 전체·전 캘린더 전처리 (S3 백필 완료 후)",
+      "preprocess": {
+        "start": "2023-03-01",
+        "end": "2025-10-31",
+        "max_stations": null,
+        "out_dir": "data/tft_processed",
+        "eligibility_out": "metadata_outputs/tft_station_eligibility.csv",
+        "stations_csv": "metadata_outputs/obsFinalStreamReg.csv"
+      },
+      "train": null,
+      "prerequisites": [
+        "KMA ingest through 2025-10-31",
+        "HRFCO waterlevel ingest through 2025-10-31"
+      ],
+      "success_criteria": [
+        "stations_included_tft_train documented in preprocess_meta.json",
+        "tft_panel.parquet row count ~= n_stations * n_hours"
+      ]
+    },
+    {
+      "id": "exp21_baseline_full",
+      "phase": "P2",
+      "status": "planned",
+      "description": "전체 패널 기본 TFT (before_training §1.3 윈도)",
+      "preprocess": null,
+      "train": {
+        "processed_dir": "data/tft_processed",
+        "eligibility_csv": "metadata_outputs/tft_station_eligibility.csv",
+        "experiment_name": "baseline_full_v1",
+        "work_dir": "experiments/tft",
+        "target_col": "wl",
+        "past_cov_cols": "wl_diff,rn,upstream_wl_1,upstream_wl_2,upstream_wl_1_mask,upstream_wl_2_mask,was_imputed",
+        "future_cov_cols": "hour_sin,hour_cos,month_sin,month_cos",
+        "input_chunk_length": 168,
+        "output_chunk_length": 6,
+        "hidden_size": 64,
+        "lstm_layers": 1,
+        "num_attention_heads": 4,
+        "dropout": 0.1,
+        "hidden_continuous_size": 16,
+        "add_relative_index": true,
+        "quantiles": "0.1,0.5,0.9",
+        "n_epochs": 50,
+        "batch_size": 128,
+        "learning_rate": 0.001,
+        "patience": 5,
+        "seed": 42,
+        "accelerator": "auto",
+        "save_predictions": true,
+        "checkpoint_name": "tft_model.pt"
+      },
+      "evaluation": {
+        "split_primary": "val",
+        "split_holdout": "test",
+        "leads_h": [1, 2, 3, 6],
+        "metrics": ["mae", "rmse", "nse"]
+      }
+    }
+  ],
+  "ablation_templates": [
+    {
+      "id": "abl_no_upstream",
+      "parent": "exp21_baseline_full",
+      "description": "상류 수위·마스크 제거",
+      "train_overrides": {
+        "experiment_name": "abl_no_upstream",
+        "past_cov_cols": "wl_diff,rn,was_imputed"
+      }
+    },
+    {
+      "id": "abl_no_rain",
+      "parent": "exp21_baseline_full",
+      "description": "강수 rn 제거",
+      "train_overrides": {
+        "experiment_name": "abl_no_rain",
+        "past_cov_cols": "wl_diff,upstream_wl_1,upstream_wl_2,upstream_wl_1_mask,upstream_wl_2_mask,was_imputed"
+      }
+    },
+    {
+      "id": "abl_larger_model",
+      "parent": "exp21_baseline_full",
+      "description": "용량 증가",
+      "train_overrides": {
+        "experiment_name": "abl_larger_v1",
+        "hidden_size": 128,
+        "hidden_continuous_size": 32,
+        "num_attention_heads": 8
+      }
+    },
+    {
+      "id": "abl_lr_low",
+      "parent": "exp21_baseline_full",
+      "description": "학습률 감소",
+      "train_overrides": {
+        "experiment_name": "abl_lr_3e4",
+        "learning_rate": 0.0003
+      }
+    }
+  ],
+  "run_commands": {
+    "exp00_smoke_preprocess": "python -u src/tft_preprocess.py --start 2024-06-15 --end 2024-06-22 --max-stations 35 --out-dir data/tft_processed_sample_train --eligibility-out data/tft_processed_sample_train/tft_station_eligibility.csv",
+    "exp00_verify": "python -u src/verify_tft_sample_mappings.py --panel data/tft_processed_sample_train/tft_train.parquet --report data/tft_processed_sample_train/mapping_verify_summary.csv",
+    "exp01_smoke_train": "python -u src/train_tft_darts.py --processed-dir data/tft_processed_sample_train --eligibility-csv data/tft_processed_sample_train/tft_station_eligibility.csv --experiment-name smoke_sample_v1 --n-epochs 1 --max-series 5 --batch-size 64",
+    "exp20_full_preprocess": "python -u src/tft_preprocess.py --start 2023-03-01 --end 2025-10-31 --out-dir data/tft_processed",
+    "exp21_baseline_full": "python -u src/train_tft_darts.py --processed-dir data/tft_processed --experiment-name baseline_full_v1 --save-predictions",
+    "eval_val": "python -u src/eval_tft_darts.py --split val --experiment-name baseline_full_v1 --processed-dir data/tft_processed",
+    "eval_test": "python -u src/eval_tft_darts.py --split test --experiment-name baseline_full_v1 --processed-dir data/tft_processed",
+    "eval_both": "python -u src/eval_tft_darts.py --split both --experiment-name baseline_full_v1 --processed-dir data/tft_processed"
+  },
+  "artifacts_per_experiment": {
+    "preprocess": [
+      "tft_panel.parquet",
+      "tft_train.parquet",
+      "tft_val.parquet",
+      "tft_test.parquet",
+      "scalers.joblib",
+      "preprocess_meta.json"
+    ],
+    "train": [
+      "{work_dir}/{experiment_name}/tft_model.pt",
+      "{work_dir}/{experiment_name}/train_meta.json"
+    ],
+    "eligibility": "tft_station_eligibility.csv (included_tft_train, exclude_reason)"
+  },
+  "open_items": [
+    "Window-level dropout for long gaps inside included stations (M2) — not in preprocess yet",
+    "Test-set metrics script / lead-wise report — post-train follow-up",
+    "GroupNormalizer vs current per-station StandardScaler — documented as equivalent intent in before_training §1.3"
+  ],
+  "notes": [
+    "Train uses only stations with included_tft_train==Y from eligibility CSV.",
+    "Val early stopping uses split==val; test is holdout until P4.",
+    "Do not overwrite metadata_outputs/tft_station_eligibility.csv when running sample preprocess — use --eligibility-out."
+  ]
+}

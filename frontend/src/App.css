@@ -1,0 +1,79 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+.leaflet-attribution-flag {
+  display: none !important;
+}
+
+body {
+  background: #0A1628;
+  color: #FFFFFF;
+  font-family: 'Pretendard', 'Noto Sans KR', -apple-system, BlinkMacSystemFont, sans-serif;
+  height: 100vh;
+  overflow: hidden;
+}
+
+#root {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes pulse {
+  0% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.5; transform: scale(1.4); }
+  100% { opacity: 1; transform: scale(1); }
+}
+
+@keyframes markerPulse {
+  0%  { transform: translate(-50%,-50%) scale(1); opacity: 0.35 }
+  100%{ transform: translate(-50%,-50%) scale(2.5); opacity: 0 }
+}
+
+.leaflet-tile-pane {
+  filter: grayscale(20%) brightness(1.0);
+}
+
+/* Leaflet attribution 다크 */
+.leaflet-control-attribution {
+  background: rgba(10, 22, 40, 0.75) !important;
+  color: #8899AA !important;
+}
+.leaflet-control-attribution a {
+  color: #4A9EFF !important;
+}
+
+/* 줌 컨트롤 다크 */
+.leaflet-control-zoom a {
+  background: #112240 !important;
+  color: #FFFFFF !important;
+  border-color: #1E3A5F !important;
+}
+.leaflet-control-zoom a:hover {
+  background: #1A2F50 !important;
+}
+
+/* Leaflet divIcon 기본 흰박스 제거 */
+.flood-marker {
+  background: none !important;
+  border: none !important;
+}
+
+/* 스크롤바 */
+::-webkit-scrollbar {
+  width: 4px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #1E3A5F;
+  border-radius: 2px;
+}

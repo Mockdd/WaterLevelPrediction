@@ -1,10 +1,10 @@
 # 큰 파일
-model/tft_model.pt
-model/tft_model.pt.ckpt
-model/scalers.joblib
-model/scalers_ref.joblib
-model/*.parquet
+*.pt
+*.ckpt
+*.joblib
 *.parquet
+events.out.tfevents.*
+lightning_logs/
 
 # 학습 데이터
 data/
@@ -18,9 +18,6 @@ database.py
 # Python
 __pycache__/
 *.pyc
-*.egg-info/
-
-# 가상환경
 venv/
 env/
 .venv/
@@ -33,18 +30,7 @@ env/
 .DS_Store
 Thumbs.db
 
-# 로그
+# 로그/임시
 *.log
 output/
 *.zip
-
-# TensorBoard 로그
-events.out.tfevents.*
-*.tfevents.*
-lightning_logs/
-tb_logs/
-checkpoints/
-
-# 체크포인트
-*.ckpt
-*.pt
